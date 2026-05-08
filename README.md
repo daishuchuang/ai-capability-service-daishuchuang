@@ -46,9 +46,29 @@ uvicorn app.main:app --host 0.0.0.0 --port 8080
 - `text`（string，必填）
 - `max_length`（int，可选，默认 120，≥ 1）
 
-实现为**本地模拟**（按句号/问号等优先截取完整句，否则截断并加 `...`），可通过环境变量控制模拟耗时：
+**提供方**由环境变量 `TEXT_SUMMARY_PROVIDER` 控制（默认 `mock`）：
 
-- `AI_CAPABILITY_SIMULATED_LATENCY_MS`：默认 `3`，设为 `0` 可关闭 `sleep`（测试脚本已关闭）。
+| 值 | 行为 |
+|----|------|
+| `mock` | 本地模拟（按句号/问号等优先截取完整句，否则截断并加 `...`） |
+| `openai` | 调用 [OpenAI Chat Completions](https://platform.openai.com/docs/api-reference/chat)（`httpx`，无官方 SDK 依赖） |
+| `anthropic` | 调用 [Anthropic Messages](https://docs.anthropic.com/en/api/messages)（Claude） |
+
+**OpenAI**（`TEXT_SUMMARY_PROVIDER=openai`）：
+
+- `OPENAI_API_KEY`（必填）
+- `OPENAI_BASE_URL`（可选，默认 `https://api.openai.com/v1`，兼容 Azure/OpenAI 兼容网关时改 base）
+- `OPENAI_MODEL`（可选，默认 `gpt-4o-mini`）
+
+**Anthropic / Claude**（`TEXT_SUMMARY_PROVIDER=anthropic`）：
+
+- `ANTHROPIC_API_KEY`（必填）
+- `ANTHROPIC_BASE_URL`（可选，默认 `https://api.anthropic.com`）
+- `ANTHROPIC_MODEL`（可选，默认 `claude-3-5-haiku-20241022`）
+
+仅 `mock` 模式会使用模拟耗时：`AI_CAPABILITY_SIMULATED_LATENCY_MS`（默认 `3`，测试中为 `0`）。
+
+上游或网络失败返回错误码 **`UPSTREAM_ERROR`**（HTTP **502**）；未配置密钥等返回 **`CONFIG_ERROR`**（HTTP **503**）。
 
 ### `text_echo`（加分）
 

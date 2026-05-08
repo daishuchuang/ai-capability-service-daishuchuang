@@ -1,3 +1,7 @@
+"""
+FastAPI 应用入口：健康检查、能力运行接口、校验错误格式与请求耗时统计。
+"""
+
 from __future__ import annotations
 
 import logging
@@ -19,6 +23,7 @@ LOG = logging.getLogger("ai_capability_service")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    """应用生命周期：启动时配置根日志格式。"""
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
@@ -37,11 +42,15 @@ app = FastAPI(
 
 @app.middleware("http")
 async def add_request_id_log_context(request: Request, call_next):
+    """
+    解析或生成 ``x-request-id``，写入 ``request.state`` 与响应头，并为日志注入 ``request_id``。
+    """
     rid = request.headers.get("x-request-id") or str(uuid.uuid4())
     request.state.request_id = rid
-    old = LOG.filters
 
     class InjectFilter(logging.Filter):
+        """将当前请求的 ``request_id`` 挂到 ``LogRecord`` 上供格式化使用。"""
+
         def filter(self, record: logging.LogRecord) -> bool:
             record.request_id = getattr(request.state, "request_id", "-")
             return True
@@ -57,6 +66,7 @@ async def add_request_id_log_context(request: Request, call_next):
 
 
 def _meta(request_id: str, capability: str, elapsed_ms: int) -> dict[str, Any]:
+    """构造响应体中的 ``meta`` 字典。"""
     return {
         "request_id": request_id,
         "capability": capability,
@@ -66,6 +76,7 @@ def _meta(request_id: str, capability: str, elapsed_ms: int) -> dict[str, Any]:
 
 @app.exception_handler(RequestValidationError)
 async def validation_handler(request: Request, exc: RequestValidationError):
+    """将 Pydantic 校验错误转为题目约定的 ``VALIDATION_ERROR`` JSON（HTTP 422）。"""
     rid = getattr(request.state, "request_id", str(uuid.uuid4()))
     errors = exc.errors()
     payload = {
@@ -82,11 +93,17 @@ async def validation_handler(request: Request, exc: RequestValidationError):
 
 @app.get("/healthz")
 def healthz():
+    """存活探针，供编排或负载均衡使用。"""
     return {"status": "ok"}
 
 
 @app.post("/v1/capabilities/run")
 async def run_capability_http(request: Request, payload: RunCapabilityRequest):
+    """
+    统一能力调用入口：分发至注册表并包装成功/业务错误/未捕获异常响应。
+
+    ``CapabilityInvocationError`` 映射到 400/502/503 等；其它异常为 500。
+    """
     rid = payload.request_id or getattr(request.state, "request_id", str(uuid.uuid4()))
     t0 = time.perf_counter()
     try:
@@ -100,7 +117,13 @@ async def run_capability_http(request: Request, payload: RunCapabilityRequest):
             payload.capability,
             elapsed_ms,
         )
-        status = 400 if e.code in {"INVALID_INPUT", "UNKNOWN_CAPABILITY"} else 500
+        error_status = {
+            "INVALID_INPUT": 400,
+            "UNKNOWN_CAPABILITY": 400,
+            "UPSTREAM_ERROR": 502,
+            "CONFIG_ERROR": 503,
+        }
+        status = error_status.get(e.code, 500)
         return JSONResponse(
             status_code=status,
             content={
